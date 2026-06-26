@@ -95,13 +95,14 @@ def quaternion_to_rotation_matrix(q):
     return rotation_matrix
 
 class Controller:
+    # 初始化控制器，设置通信、加载策略、初始化变量
     def __init__(self, config: Config) -> None:
         self.config = config
         self.remote_controller = RemoteController()
         
-        # Initialize the policy network
+        # Initialize the policy network，策略网络初始化
         self.policy =  onnxruntime.InferenceSession(config.policy_path)# torch.jit.load(config.policy_path)
-        # Initializing process variables
+        # Initializing process variables，初始化过程变量
         self.qj = np.zeros(config.num_actions, dtype=np.float32)
         self.dqj = np.zeros(config.num_actions, dtype=np.float32)
         self.action = np.zeros(config.num_actions, dtype=np.float32)
@@ -121,7 +122,8 @@ class Controller:
                         12, 13, 14, 
                         15, 16, 17, 18, 19, 20, 21, 
                         22, 23, 24, 25, 26, 27, 28]
-        if config.msg_type == "hg":
+        # 根据配置选择消息类型并初始化通信接口
+        if config.msg_type == "hg": 
             # g1 and h1_2 use the hg msg type
             self.low_cmd = unitree_hg_msg_dds__LowCmd_()
             self.low_state = unitree_hg_msg_dds__LowState_()
@@ -156,25 +158,24 @@ class Controller:
             init_cmd_hg(self.low_cmd, self.mode_machine_, self.mode_pr_)
         elif config.msg_type == "go":
             init_cmd_go(self.low_cmd, weak_motor=self.config.weak_motor)
-
+    #DDS消息回调函数，接收低级状态更新并更新内部状态变量
     def LowStateHgHandler(self, msg: LowStateHG):
         self.low_state = msg
         self.mode_machine_ = self.low_state.mode_machine
         self.remote_controller.set(self.low_state.wireless_remote)
-
     def LowStateGoHandler(self, msg: LowStateGo):
         self.low_state = msg
         self.remote_controller.set(self.low_state.wireless_remote)
-
+    # 发送命令函数，将构建好的命令消息发布到DDS主题
     def send_cmd(self, cmd: Union[LowCmdGo, LowCmdHG]):
         cmd.crc = CRC().Crc(cmd)
         self.lowcmd_publisher_.Write(cmd)
-
+    # 等待函数，直到成功接收到低级状态消息，确保与机器人建立连接
     def wait_for_low_state(self):
         while self.low_state.tick == 0:
             time.sleep(self.config.control_dt)
         print("Successfully connected to the robot.")
-
+    # 进入零力矩状态，等待开始信号
     def zero_torque_state(self):
         print("Enter zero torque state.")
         print("Waiting for the start signal...")
@@ -182,7 +183,7 @@ class Controller:
             create_zero_cmd(self.low_cmd)
             self.send_cmd(self.low_cmd)
             time.sleep(self.config.control_dt)
-
+    # 从当前姿态平滑过渡到默认站立姿态
     def move_to_default_pos(self):
         print("Moving to default pos.")
         # move time 2s
@@ -214,7 +215,7 @@ class Controller:
                 self.low_cmd.motor_cmd[motor_idx].tau = 0
             self.send_cmd(self.low_cmd)
             time.sleep(self.config.control_dt)
-
+    # 进入默认位置状态，等待按钮A的信号继续执行
     def default_pos_state(self):
         print("Enter default pos state.")
         print("Waiting for the Button A signal...")
@@ -278,6 +279,7 @@ class Controller:
             z = 0.25 * s
         
         return np.array([w, x, y, z])
+    # 主控制循环，获取状态，构建观测，运行策略网络，发送命令
     def run(self):
         self.counter += 1
         # Get the current joint position and velocity
@@ -302,7 +304,7 @@ class Controller:
             waist_roll = self.low_state.motor_state[self.config.arm_waist_joint2motor_idx[1]].q
             waist_pitch= self.low_state.motor_state[self.config.arm_waist_joint2motor_idx[2]].q
             quat_torso = transform_pelvis_to_torso_complete(waist_yaw, waist_roll, waist_pitch, quat)
-        
+        #前两步的动作是为了将IMU数据转换到躯干坐标系下，便于后续的控制和观测构建。
         if self.timestep < 2:
             ref_motion_quat = self.motionquat[self.timestep,9,:]
             yaw_motion_quat = self.yaw_quat(ref_motion_quat)
@@ -324,12 +326,12 @@ class Controller:
         motioninput = np.concatenate((self.motioninputpos[self.timestep,:],self.motioninputvel[self.timestep,:]), axis=0)
         motionposcurrent = self.motionpos[self.timestep,9,:]
         motionquatcurrent = self.motionquat[self.timestep,9,:]
-
+        #计算从初始方向到当前运动方向的相对旋转
         relquat =  quaternion_multiply(self.matrix_to_quaternion_simple(self.init_to_world), motionquatcurrent)
         relquat = quaternion_multiply(quaternion_conjugate(quat_torso),relquat)
         relquat = relquat / np.linalg.norm(relquat)
         relmatrix = quaternion_to_rotation_matrix(relquat)[:,:2].reshape(-1,)
-        
+        #构建观测向量
         offset = 0
         self.obs[offset:offset+58] = motioninput
         offset += 58
@@ -347,7 +349,7 @@ class Controller:
         offset += 29
         self.obs[offset:offset+29] = self.action_buffer
                 
-        # Get the action from the policy network
+        # Get the action from the policy network，从onnx中获取动作
         obs_tensor = torch.from_numpy(self.obs).unsqueeze(0)
         action = self.policy.run(['actions'], {'obs': obs_tensor.numpy(),'time_step':np.array([self.timestep], dtype=np.float32).reshape(1,1)})[0]
         

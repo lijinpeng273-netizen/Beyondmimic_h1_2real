@@ -20,7 +20,14 @@ class Config:
             self.lowcmd_topic = config["lowcmd_topic"]
             self.lowstate_topic = config["lowstate_topic"]
 
+            self.dds_domain = config.get("dds_domain", 0)
+            self.dds_interface = config.get("dds_interface", "lo")
+
             self.policy_path = config["policy_path"].replace("{LEGGED_GYM_ROOT_DIR}", LEGGED_GYM_ROOT_DIR)
+
+            raw_motion = config.get("motion_file", "")
+            self.motion_file = raw_motion.replace("{LEGGED_GYM_ROOT_DIR}", LEGGED_GYM_ROOT_DIR) if raw_motion else ""
+            self.motion_anchor_index = config.get("motion_anchor_index", 0)
 
             self.leg_joint2motor_idx = config["leg_joint2motor_idx"]
             # self.kps = config["kps"]

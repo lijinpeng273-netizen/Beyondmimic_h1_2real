@@ -1,0 +1,470 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="h1_description">
+
+  <!-- ========================================================================= -->
+  <!-- MuJoCo compiler configuration (for downstream MJCF conversion)            -->
+  <!-- ========================================================================= -->
+  <mujoco>
+    <compiler meshdir="../meshes" discardvisual="false"/>
+  </mujoco>
+
+  <!-- ========================================================================= -->
+  <!-- Properties                                                               -->
+  <!-- ========================================================================= -->
+  <xacro:property name="package_name" value="h1_description"/>
+  <xacro:property name="pi_2" value="1.5707963267948966192313216916398"/>
+
+  <!-- ========================================================================= -->
+  <!-- Material macros                                                           -->
+  <!-- ========================================================================= -->
+  <xacro:macro name="material_dark">
+    <material name="">
+      <color rgba="0.1 0.1 0.1 1"/>
+    </material>
+  </xacro:macro>
+
+  <xacro:macro name="material_white">
+    <material name="">
+      <color rgba="1 1 1 1"/>
+    </material>
+  </xacro:macro>
+
+  <!-- ========================================================================= -->
+  <!-- Leg Chain Macro (left or right)                                          -->
+  <!-- sign_y = 1 for left, -1 for right                                        -->
+  <!-- Creates: hip_yaw → hip_roll → hip_pitch → knee → ankle                   -->
+  <!-- ========================================================================= -->
+  <xacro:macro name="leg_chain" params="prefix sign_y">
+    <!-- hip_yaw_link -->
+    <link name="${prefix}_hip_yaw_link">
+      <inertial>
+        <origin xyz="-0.061433 ${0.000017 * sign_y} 0.007627" rpy="0 0 0"/>
+        <mass value="2.965"/>
+        <inertia ixx="5321.009E-06" ixy="${2.253E-06 * sign_y}" ixz="-876.895E-06"
+                 iyy="5017.692E-06" iyz="${1.134E-06 * sign_y}" izz="4100.851E-06"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${package_name}/meshes/${prefix}_hip_yaw_link.STL"/>
+        </geometry>
+        <xacro:material_dark/>
+      </visual>
+      <collision>
+        <origin xyz="0.02 0 0" rpy="0 ${pi_2} 0"/>
+        <geometry>
+          <cylinder radius="0.01" length="0.02"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}_hip_yaw_joint" type="revolute">
+      <origin xyz="0 ${0.0875 * sign_y} -0.1742" rpy="0 0 0"/>
+      <parent link="pelvis"/>
+      <child link="${prefix}_hip_yaw_link"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="-0.43" upper="0.43" effort="200" velocity="23"/>
+    </joint>
+
+    <!-- hip_roll_link -->
+    <link name="${prefix}_hip_roll_link">
+      <inertial>
+        <origin xyz="-0.005276 ${-0.013573 * sign_y} 4E-06" rpy="0 0 0"/>
+        <mass value="2.7150"/>
+        <inertia ixx="3080.049E-06" ixy="${168.940E-06 * sign_y}" ixz="-2.442E-06"
+                 iyy="4367.226E-06" iyz="${0.432E-06 * sign_y}" izz="3475.582E-06"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${package_name}/meshes/${prefix}_hip_roll_link.STL"/>
+        </geometry>
+        <xacro:material_dark/>
+      </visual>
+      <collision>
+        <origin xyz="0 ${0.06 * sign_y} 0" rpy="${pi_2} 0 0"/>
+        <geometry>
+          <cylinder radius="0.02" length="0.01"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}_hip_roll_joint" type="revolute">
+      <origin xyz="0.039468 0 0" rpy="0 0 0"/>
+      <parent link="${prefix}_hip_yaw_link"/>
+      <child link="${prefix}_hip_roll_link"/>
+      <axis xyz="1 0 0"/>
+      <limit lower="-0.43" upper="0.43" effort="200" velocity="23"/>
+    </joint>
+
+    <!-- hip_pitch_link -->
+    <link name="${prefix}_hip_pitch_link">
+      <inertial>
+        <origin xyz="0.007636 ${-0.029298 * sign_y} -0.082670" rpy="0 0 0"/>
+        <mass value="4.953"/>
+        <inertia ixx="96268.791E-06" ixy="${-853.307E-06 * sign_y}" ixz="4520.830E-06"
+                 iyy="95311.563E-06" iyz="${10678.487E-06 * sign_y}" izz="8309.394E-06"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${package_name}/meshes/${prefix}_hip_pitch_link.STL"/>
+        </geometry>
+        <xacro:material_dark/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 -0.2" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="0.05" length="0.2"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}_hip_pitch_joint" type="revolute">
+      <origin xyz="0 ${0.11536 * sign_y} 0" rpy="0 0 0"/>
+      <parent link="${prefix}_hip_roll_link"/>
+      <child link="${prefix}_hip_pitch_link"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-3.14" upper="2.53" effort="200" velocity="23"/>
+    </joint>
+
+    <!-- knee_link -->
+    <link name="${prefix}_knee_link">
+      <inertial>
+        <origin xyz="0.003406 ${-0.005279 * sign_y} -0.143702" rpy="0 0 0"/>
+        <mass value="2.824"/>
+        <inertia ixx="23792.186E-06" ixy="${-201.965E-06 * sign_y}" ixz="1348.223E-06"
+                 iyy="24505.066E-06" iyz="${342.730E-06 * sign_y}" izz="3235.744E-06"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${package_name}/meshes/${prefix}_knee_link.STL"/>
+        </geometry>
+        <xacro:material_dark/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 -0.2" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="0.05" length="0.2"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}_knee_joint" type="revolute">
+      <origin xyz="0 0 -0.4" rpy="0 0 0"/>
+      <parent link="${prefix}_hip_pitch_link"/>
+      <child link="${prefix}_knee_link"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-0.26" upper="2.05" effort="300" velocity="14"/>
+    </joint>
+
+    <!-- ankle_link -->
+    <link name="${prefix}_ankle_link">
+      <inertial>
+        <origin xyz="0.042537 0 -0.041674" rpy="0 0 0"/>
+        <mass value="0.725"/>
+        <inertia ixx="236.702E-06" ixy="0" ixz="197.223E-06"
+                 iyy="3296.133E-06" iyz="0" izz="3145.554E-06"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${package_name}/meshes/${prefix}_ankle_link.STL"/>
+        </geometry>
+        <xacro:material_dark/>
+      </visual>
+      <collision>
+        <origin xyz="0.05 0.0 -0.05" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.28 0.03 0.024"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}_ankle_joint" type="revolute">
+      <origin xyz="0 0 -0.4" rpy="0 0 0"/>
+      <parent link="${prefix}_knee_link"/>
+      <child link="${prefix}_ankle_link"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-0.87" upper="0.52" effort="40" velocity="9"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- ========================================================================= -->
+  <!-- Arm Chain Macro (left or right, shoulder → elbow, NO hand)               -->
+  <!-- sign_y = 1 for left, -1 for right                                        -->
+  <!-- ========================================================================= -->
+  <xacro:macro name="arm_chain" params="prefix sign_y">
+    <!-- shoulder_pitch_link -->
+    <link name="${prefix}_shoulder_pitch_link">
+      <inertial>
+        <origin xyz="0.005045 ${0.053657 * sign_y} -0.015715" rpy="0 0 0"/>
+        <mass value="1.142"/>
+        <inertia ixx="0.0012985" ixy="${-1.7333E-05 * sign_y}" ixz="8.683E-06"
+                 iyy="0.00087279" iyz="${3.9656E-05 * sign_y}" izz="0.00097338"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${package_name}/meshes/${prefix}_shoulder_pitch_link.STL"/>
+        </geometry>
+        <xacro:material_dark/>
+      </visual>
+      <collision>
+        <origin xyz="0 ${-0.05 * sign_y} 0" rpy="${pi_2 * sign_y} 0 0"/>
+        <geometry>
+          <cylinder radius="0.03" length="0.04"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}_shoulder_pitch_joint" type="revolute">
+      <origin xyz="0.0055 ${0.15535 * sign_y} 0.42999" rpy="${0.43633 * sign_y} 0 0"/>
+      <parent link="torso_link"/>
+      <child link="${prefix}_shoulder_pitch_link"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-2.87" upper="2.87" effort="40" velocity="9"/>
+    </joint>
+
+    <!-- shoulder_roll_link -->
+    <link name="${prefix}_shoulder_roll_link">
+      <inertial>
+        <origin xyz="0.000679 ${0.00115 * sign_y} -0.094076" rpy="0 0 0"/>
+        <mass value="0.852"/>
+        <inertia ixx="0.0015742" ixy="${2.298E-06 * sign_y}" ixz="-7.2265E-05"
+                 iyy="0.0016973" iyz="${-6.3691E-05 * sign_y}" izz="0.0010183"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${package_name}/meshes/${prefix}_shoulder_roll_link.STL"/>
+        </geometry>
+        <xacro:material_dark/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 -0.04" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="0.04" length="0.01"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}_shoulder_roll_joint" type="revolute">
+      <origin xyz="-0.0055 ${0.0565 * sign_y} -0.0165" rpy="${-0.43633 * sign_y} 0 0"/>
+      <parent link="${prefix}_shoulder_pitch_link"/>
+      <child link="${prefix}_shoulder_roll_link"/>
+      <axis xyz="1 0 0"/>
+      <xacro:if value="${sign_y == 1}">
+        <limit lower="-0.34" upper="3.11" effort="40" velocity="9"/>
+      </xacro:if>
+      <xacro:unless value="${sign_y == 1}">
+        <limit lower="-3.11" upper="0.34" effort="40" velocity="9"/>
+      </xacro:unless>
+    </joint>
+
+    <!-- shoulder_yaw_link -->
+    <link name="${prefix}_shoulder_yaw_link">
+      <inertial>
+        <origin xyz="0.01365 ${0.002767 * sign_y} -0.16266" rpy="0 0 0"/>
+        <mass value="0.862"/>
+        <inertia ixx="0.003664" ixy="${-1.0671E-05 * sign_y}" ixz="0.00034733"
+                 iyy="0.0040789" iyz="${7.0213E-05 * sign_y}" izz="0.00066383"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${package_name}/meshes/${prefix}_shoulder_yaw_link.STL"/>
+        </geometry>
+        <xacro:material_dark/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 -0.11" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="0.04" length="0.01"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}_shoulder_yaw_joint" type="revolute">
+      <origin xyz="0 0 -0.1343" rpy="0 0 0"/>
+      <parent link="${prefix}_shoulder_roll_link"/>
+      <child link="${prefix}_shoulder_yaw_link"/>
+      <axis xyz="0 0 1"/>
+      <xacro:if value="${sign_y == 1}">
+        <limit lower="-1.3" upper="4.45" effort="18" velocity="20"/>
+      </xacro:if>
+      <xacro:unless value="${sign_y == 1}">
+        <limit lower="-4.45" upper="1.3" effort="18" velocity="20"/>
+      </xacro:unless>
+    </joint>
+
+    <!-- elbow_link (terminal link for the arm, no hand) -->
+    <link name="${prefix}_elbow_link">
+      <inertial>
+        <origin xyz="0.164862 ${0.000118 * sign_y} -0.015734" rpy="0 0 0"/>
+        <mass value="0.745"/>
+        <inertia ixx="0.00042388" ixy="${-3.6086E-05 * sign_y}" ixz="0.00029293"
+                 iyy="0.0060062" iyz="${4.664E-06 * sign_y}" izz="0.0060023"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${package_name}/meshes/${prefix}_elbow_link.STL"/>
+        </geometry>
+        <xacro:material_dark/>
+      </visual>
+      <collision>
+        <origin xyz="0.125 0 0" rpy="0 1.57 0"/>
+        <geometry>
+          <cylinder radius="0.03" length="0.09"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}_elbow_joint" type="revolute">
+      <origin xyz="0.0185 0 -0.198" rpy="0 0 0"/>
+      <parent link="${prefix}_shoulder_yaw_link"/>
+      <child link="${prefix}_elbow_link"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-1.25" upper="2.61" effort="18" velocity="20"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- ========================================================================= -->
+  <!-- Sensor Link Macro (visual + collision as sphere, white material)          -->
+  <!-- ========================================================================= -->
+  <xacro:macro name="sensor_link" params="base_name parent_link joint_origin_xyz joint_origin_rpy">
+    <link name="${base_name}_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <sphere radius="0.001"/>
+        </geometry>
+        <xacro:material_white/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <sphere radius="0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${base_name}_joint" type="fixed">
+      <origin xyz="${joint_origin_xyz}" rpy="${joint_origin_rpy}"/>
+      <parent link="${parent_link}"/>
+      <child link="${base_name}_link"/>
+      <axis xyz="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- ========================================================================= -->
+  <!-- ===========================  MAIN ASSEMBLY  ============================= -->
+  <!-- ========================================================================= -->
+
+  <!-- ===== Pelvis (base link) ===== -->
+  <link name="pelvis">
+    <inertial>
+      <origin xyz="-0.0004 3.7E-05 -0.046864" rpy="0 0 0"/>
+      <mass value="5.983"/>
+      <inertia ixx="49168.411E-06" ixy="-19.869E-06" ixz="-48.460E-06"
+               iyy="9025.844E-06" iyz="3.431E-06" izz="53155.891E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://${package_name}/meshes/pelvis.STL"/>
+      </geometry>
+      <xacro:material_dark/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.05"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ===== Left Leg ===== -->
+  <xacro:leg_chain prefix="left" sign_y="1"/>
+
+  <!-- ===== Right Leg ===== -->
+  <xacro:leg_chain prefix="right" sign_y="-1"/>
+
+  <!-- ===== Torso ===== -->
+  <link name="torso_link">
+    <inertial>
+      <origin xyz="0.000489 0.002797 0.20484" rpy="0 0 0"/>
+      <mass value="17.789"/>
+      <inertia ixx="0.4873" ixy="-0.00053763" ixz="0.0020276"
+               iyy="0.40963" iyz="-0.00074582" izz="0.12785"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://${package_name}/meshes/torso_link.STL"/>
+      </geometry>
+      <xacro:material_dark/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.15" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.08 0.16 0.1"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="torso_joint" type="revolute">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="pelvis"/>
+    <child link="torso_link"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.35" upper="2.35" effort="200" velocity="23"/>
+  </joint>
+
+  <!-- ===== Left Arm (shoulder → elbow, no hand) ===== -->
+  <xacro:arm_chain prefix="left" sign_y="1"/>
+
+  <!-- ===== Right Arm (shoulder → elbow, no hand) ===== -->
+  <xacro:arm_chain prefix="right" sign_y="-1"/>
+
+  <!-- ===== IMU ===== -->
+  <link name="imu_link"/>
+  <joint name="imu_joint" type="fixed">
+    <origin xyz="-0.04452 -0.01891 0.27756" rpy="0 0 0"/>
+    <parent link="torso_link"/>
+    <child link="imu_link"/>
+  </joint>
+
+  <!-- ===== Logo ===== -->
+  <link name="logo_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://${package_name}/meshes/logo_link.STL"/>
+      </geometry>
+      <xacro:material_white/>
+    </visual>
+  </link>
+
+  <joint name="logo_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="torso_link"/>
+    <child link="logo_link"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+
+  <!-- ===== Sensors ===== -->
+  <xacro:sensor_link base_name="d435_left_imager" parent_link="torso_link"
+    joint_origin_xyz="0.10848474394 0.0175 0.69317107367"
+    joint_origin_rpy="-2.45735 0 -1.57080"/>
+
+  <xacro:sensor_link base_name="d435_rgb_module" parent_link="torso_link"
+    joint_origin_xyz="0.10848474394 0.0325 0.69317107367"
+    joint_origin_rpy="-2.45735 0 -1.57080"/>
+
+  <xacro:sensor_link base_name="mid360" parent_link="torso_link"
+    joint_origin_xyz="0.04729990180 0 0.67492878653"
+    joint_origin_rpy="0 0.243124 0"/>
+
+</robot>
