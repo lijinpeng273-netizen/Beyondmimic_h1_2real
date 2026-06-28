@@ -337,10 +337,10 @@ class H1SafetyMonitor:
                 self.clip_count += 1
 
         # 软限位: 策略关节使用 tight margin，非策略关节宽松
-        for dof_idx in range(len(self._q_min)):
-            motor_idx = self.dof_idx[dof_idx]
+        for dof_i in range(len(self._q_min)):
+            motor_idx = self.dof_idx[dof_i]
             q_clipped[motor_idx] = np.clip(q_clipped[motor_idx],
-                                           self._q_min[dof_idx], self._q_max[dof_idx])
+                                           self._q_min[dof_i], self._q_max[dof_i])
 
         q_clipped[self._not_use_idx] = 0.0
         self._q_des_prev_20 = q_clipped.copy()

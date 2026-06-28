@@ -1,6 +1,9 @@
-from legged_gym import LEGGED_GYM_ROOT_DIR
+import os
 import numpy as np
 import yaml
+
+# 仓库根目录（deploy_real/config.py 的上两级 = Beyondmimic_Deploy_G1/）
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class Config:
@@ -23,10 +26,10 @@ class Config:
             self.dds_domain = config.get("dds_domain", 0)
             self.dds_interface = config.get("dds_interface", "lo")
 
-            self.policy_path = config["policy_path"].replace("{LEGGED_GYM_ROOT_DIR}", LEGGED_GYM_ROOT_DIR)
+            self.policy_path = config["policy_path"].replace("{LEGGED_GYM_ROOT_DIR}", _REPO_ROOT)
 
             raw_motion = config.get("motion_file", "")
-            self.motion_file = raw_motion.replace("{LEGGED_GYM_ROOT_DIR}", LEGGED_GYM_ROOT_DIR) if raw_motion else ""
+            self.motion_file = raw_motion.replace("{LEGGED_GYM_ROOT_DIR}", _REPO_ROOT) if raw_motion else ""
             self.motion_anchor_index = config.get("motion_anchor_index", 0)
 
             self.leg_joint2motor_idx = config["leg_joint2motor_idx"]

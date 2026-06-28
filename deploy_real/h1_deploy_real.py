@@ -23,25 +23,32 @@
 
 from __future__ import annotations
 
+import os
 import sys
-sys.path.append('/home/deepcyber-mk/Documents/unitree_rl_gym')
-sys.path.append('/home/deepcyber-mk/Documents/unitree_rl_gym/deploy/deploy_real/common')
+
+# 确保 deploy_real/ 在 sys.path 中（当前脚本所在目录，common/ 等依赖在此）
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+
+# Unitree SDK 路径（本地安装位置）
+_sdk_dir = "/home/ljp/下载/unitree_sdk2_python"
+if os.path.isdir(_sdk_dir) and _sdk_dir not in sys.path:
+    sys.path.insert(0, _sdk_dir)
 
 import argparse
 import time
 
 import numpy as np
 import onnxruntime as ort
-import torch
 
-from legged_gym import LEGGED_GYM_ROOT_DIR
 from unitree_sdk2py.core.channel import ChannelPublisher, ChannelFactoryInitialize
 from unitree_sdk2py.core.channel import ChannelSubscriber
 from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_, unitree_go_msg_dds__LowState_
 from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_ as LowCmdGo
 from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_ as LowStateGo
 from unitree_sdk2py.utils.crc import CRC
-from common.command_helper import create_damping_cmd, create_zero_cmd, init_cmd_go
+from common.command_helper import create_damping_cmd, init_cmd_go
 from common.rotation_helper import transform_imu_data
 from common.remote_controller import RemoteController, KeyMap
 from config import Config
@@ -50,118 +57,12 @@ from h1_config import (
     joint_seq, joint_xml, dof_idx,
 )
 from h1_safety import H1SafetyMonitor, H1SafetyConfig
-
-
-# ============================================================================
-# 数学工具函数
-# ============================================================================
-
-def quaternion_conjugate(q):
-    """四元数共轭: [w, x, y, z] -> [w, -x, -y, -z]"""
-    return np.array([q[0], -q[1], -q[2], -q[3]])
-
-
-def quaternion_multiply(q1, q2):
-    """四元数乘法（Hamilton 积）: q1 ⊗ q2"""
-    w1, x1, y1, z1 = q1
-    w2, x2, y2, z2 = q2
-    return np.array([
-        w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-        w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-        w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-        w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-    ])
-
-
-def quat_inv_np(q: np.ndarray, eps: float = 1e-9) -> np.ndarray:
-    """四元数的逆。"""
-    return quaternion_conjugate(q) / np.clip(np.sum(q ** 2, axis=-1, keepdims=True),
-                                             a_min=eps, a_max=None)
-
-
-def quat_rotate_inverse_np(q, v):
-    """用四元数的逆旋转来变换向量。v_local = R(q)^T * v"""
-    q_w, q_vec = q[0], q[1:4]
-    a = v * (2.0 * q_w ** 2 - 1.0)
-    b = np.cross(q_vec, v) * q_w * 2.0
-    c = q_vec * np.dot(q_vec, v) * 2.0
-    return a - b + c
-
-
-def subtract_frame_transforms_np(t01, q01, t02, q02):
-    """计算帧 2 相对于帧 1 的变换（在帧 1 局部坐标系中）。
-
-    返回: (t_12, q_12) — 相对位置和相对四元数
-    """
-    q01_inv = quat_inv_np(q01)
-    q_12 = quaternion_multiply(q01_inv, q02)
-    t_12 = quat_rotate_inverse_np(q01, t02 - t01)
-    return t_12, q_12
-
-
-def matrix_from_quat(quaternions: np.ndarray) -> np.ndarray:
-    """将四元数转换为旋转矩阵。格式 (w, x, y, z)，标量在前。"""
-    r, i, j, k = np.moveaxis(quaternions, -1, 0)
-    two_s = 2.0 / np.sum(quaternions * quaternions, axis=-1)
-    o = np.array([
-        1 - two_s * (j * j + k * k),
-        two_s * (i * j - k * r),
-        two_s * (i * k + j * r),
-        two_s * (i * j + k * r),
-        1 - two_s * (i * i + k * k),
-        two_s * (j * k - i * r),
-        two_s * (i * k - j * r),
-        two_s * (j * k + i * r),
-        1 - two_s * (i * i + j * j),
-    ])
-    return o.reshape(quaternions.shape[:-1] + (3, 3))
-
-
-def quaternion_to_rotation_matrix(q):
-    """将四元数转换为 3x3 旋转矩阵。"""
-    q = np.array(q, dtype=np.float64)
-    q = q / np.linalg.norm(q)
-    w, x, y, z = q
-    return np.array([
-        [1 - 2*y**2 - 2*z**2, 2*x*y - 2*z*w, 2*x*z + 2*y*w],
-        [2*x*y + 2*z*w, 1 - 2*x**2 - 2*z**2, 2*y*z - 2*x*w],
-        [2*x*z - 2*y*w, 2*y*z + 2*x*w, 1 - 2*x**2 - 2*y**2],
-    ])
-
-
-def matrix_to_quaternion_simple(matrix):
-    """将 3x3 旋转矩阵转换为四元数 [w, x, y, z]。"""
-    matrix = np.array(matrix)
-    m00, m01, m02 = matrix[0]
-    m10, m11, m12 = matrix[1]
-    m20, m21, m22 = matrix[2]
-    trace = m00 + m11 + m22
-    if trace > 0:
-        s = 0.5 / np.sqrt(trace + 1.0)
-        w = 0.25 / s
-        x = (m21 - m12) * s
-        y = (m02 - m20) * s
-        z = (m10 - m01) * s
-    elif m00 > m11 and m00 > m22:
-        s = 2.0 * np.sqrt(1.0 + m00 - m11 - m22)
-        w = (m21 - m12) / s
-        x = 0.25 * s
-        y = (m01 + m10) / s
-        z = (m02 + m20) / s
-    elif m11 > m22:
-        s = 2.0 * np.sqrt(1.0 + m11 - m00 - m22)
-        w = (m02 - m20) / s
-        x = (m01 + m10) / s
-        y = 0.25 * s
-        z = (m12 + m21) / s
-    else:
-        s = 2.0 * np.sqrt(1.0 + m22 - m00 - m11)
-        w = (m10 - m01) / s
-        x = (m02 + m20) / s
-        y = (m12 + m21) / s
-        z = 0.25 * s
-    return np.array([w, x, y, z])
-
+from observation_builder import (
+    build_observation,
+    remap_xml_to_seq,
+    action_to_target,
+    compute_init_to_world,
+)
 
 # ============================================================================
 # 控制器类
@@ -193,9 +94,12 @@ class Controller:
         self.motioninputpos = self.motion["joint_pos"]
         self.motioninputvel = self.motion["joint_vel"]
         self.action_buffer = np.zeros((self.config.num_actions,), dtype=np.float32)
+        # 从轨迹最后 20 帧提取站立锁定目标 (ONNX joint_seq 顺序)
+        n_hold = min(20, self.motioninputpos.shape[0])
+        self._hold_target_seq = np.mean(self.motioninputpos[-n_hold:, :NUM_ACTIONS], axis=0)
 
         # ------ Yaw 对齐矩阵 ------
-        self.init_to_world = np.zeros((3, 3), dtype=np.float32)
+        self.init_to_world = np.eye(3, dtype=np.float64)  # yaw 对齐矩阵，初始为单位阵
 
         # ------ 运动锚点索引（默认 pelvis=0，可在 YAML 中配置 motion_anchor_index）------
         self.motion_anchor_idx = getattr(config, "motion_anchor_index", 0)
@@ -220,10 +124,10 @@ class Controller:
 
         # ------ 安全监控器（舞蹈优化参数） ------
         safety_config = H1SafetyConfig(
-            soft_limit_margin=1.5,    # 放宽限位：深蹲、举手、扭腰需要更大范围
-            warmup_steps=0,           # 关掉预热：舞蹈不需要渐进启动
-            action_smoothing=0.05,    # 极轻平滑：防抖但不拖慢动作
-            q_des_delta_max=2.0,      # 放宽速率限制：允许更快的姿势切换
+            soft_limit_margin=1.5,    # 舞蹈动作范围大
+            warmup_steps=0,           # 不需要预热
+            action_smoothing=0.15,    # 手臂防抖（不修改刚度）
+            q_des_delta_max=2.0,      # 允许快速切换姿势
         )
         self.safety = H1SafetyMonitor(
             default_angles=config.default_angles,
@@ -239,12 +143,47 @@ class Controller:
         for dof_i in range(len(dof_idx)):
             motor_id = dof_idx[dof_i]
             self._default_pos_20[motor_id] = config.default_angles[dof_i]
+        # 舞蹈 + 站立共用实机验证增益 (H1 DDS 经验值)
+        # DOF 顺序: L_hip_yaw, L_hip_roll, L_hip_pitch, L_knee, L_ankle,
+        #            R_hip_yaw, R_hip_roll, R_hip_pitch, R_knee, R_ankle,
+        #            torso, L_shld_pitch, L_shld_roll, L_shld_yaw, L_elbow,
+        #            R_shld_pitch, R_shld_roll, R_shld_yaw, R_elbow
+        # H1 实机验证增益（匹配参考值，不再修改）
+        _kp_dof = np.array([
+            200, 200, 200, 300, 40,        # 左腿
+            200, 200, 200, 300, 40,        # 右腿
+            300,                            # 腰
+            100, 100, 100, 100,            # 左臂
+            100, 100, 100, 100,            # 右臂
+        ], dtype=np.float64)
+        _kd_dof = np.array([
+            5, 5, 5, 6, 5,                # 左腿
+            5, 5, 5, 6, 5,                # 右腿
+            6,                             # 腰
+            2, 2, 2, 2,                   # 左臂
+            2, 2, 2, 2,                   # 右臂
+        ], dtype=np.float64)
         self._kp_20 = np.zeros(20, dtype=np.float64)
         self._kd_20 = np.zeros(20, dtype=np.float64)
         for dof_i in range(len(dof_idx)):
             motor_id = dof_idx[dof_i]
-            self._kp_20[motor_id] = config.stiffness[dof_i]
-            self._kd_20[motor_id] = config.damping[dof_i]
+            self._kp_20[motor_id] = _kp_dof[dof_i]
+            self._kd_20[motor_id] = _kd_dof[dof_i]
+
+        # 站立专用增益 (与舞蹈相同，H1 实机验证值)
+        self._stand_kp_20 = self._kp_20.copy()
+        self._stand_kd_20 = self._kd_20.copy()
+
+        # 将站立锁定目标从 ONNX 顺序转为 DDS 20 维顺序
+        hold_xml = np.array([self._hold_target_seq[joint_seq.index(j)] for j in joint_xml])
+        self._hold_target_20 = self._default_pos_20.copy()
+        for dof_i in range(len(dof_idx)):
+            self._hold_target_20[dof_idx[dof_i]] = hold_xml[dof_i]
+
+        # 运动总帧数（用于舞蹈结束前提前介入）
+        self.num_frames = self.motioninputpos.shape[0]
+        # 锁定站立目标（从 NPZ 最后 20 帧提取，预计算，供 pre_blend 和站立使用）
+        # 不需要预计算增益——舞蹈期间的策略增益已经验证有效，退出时保持不变
 
         # RL 是否已接合（供 main loop 安全检测使用）
         self._rl_engaged = False
@@ -264,11 +203,29 @@ class Controller:
         print("[INFO]: Successfully connected to the robot.")
 
     # ----- 状态机 -----
-    def zero_torque_state(self):
-        """零力矩状态：等待遥控器 Start 键。"""
-        print("[INFO]: Enter zero torque state. Waiting for Start signal...")
-        while self.remote_controller.button[KeyMap.start] != 1:
-            create_zero_cmd(self.low_cmd)
+    def hold_current_position(self):
+        """PD Hold 当前位置：锁定关节，等待遥控器 Start 键。
+
+        与 zero_torque_state 不同，此方法以当前位置为目标发送 PD 指令，
+        机器人始终保持主动控制，不会脱力摔倒。
+        """
+        print("[INFO]: PD Hold at current position. Waiting for A signal...")
+
+        # 读取当前关节位置，锁住不动
+        hold_pos = np.zeros(20, dtype=np.float64)
+        for i in range(20):
+            hold_pos[i] = self.low_state.motor_state[i].q
+        hold_pos[9] = 0.0  # not_use 通道置零
+
+        # 站立专用增益（踝 5x / 腿 3x / 臂 1.5x）
+
+        while self.remote_controller.button[KeyMap.A] != 1:
+            for motor_id in range(20):
+                self.low_cmd.motor_cmd[motor_id].q = float(hold_pos[motor_id])
+                self.low_cmd.motor_cmd[motor_id].qd = 0.0
+                self.low_cmd.motor_cmd[motor_id].kp = float(self._stand_kp_20[motor_id])
+                self.low_cmd.motor_cmd[motor_id].kd = float(self._stand_kd_20[motor_id])
+                self.low_cmd.motor_cmd[motor_id].tau = 0.0
             self.send_cmd(self.low_cmd)
             time.sleep(self.config.control_dt)
 
@@ -278,11 +235,7 @@ class Controller:
         total_time = 2.0
         num_step = int(total_time / self.config.control_dt)
 
-        leg_size = len(self.config.leg_joint2motor_idx)
-        arm_size = len(self.config.arm_waist_joint2motor_idx)
-        dof_size = leg_size + arm_size  # 19 for H1
-        kps = self.config.stiffness
-        kds = self.config.damping
+        dof_size = len(dof_idx)  # 19 for H1
         default_pos = self.config.default_angles.copy()
 
         # 记录当前关节位置
@@ -290,7 +243,7 @@ class Controller:
         for i in range(dof_size):
             init_dof_pos[i] = self.low_state.motor_state[dof_idx[i]].q
 
-        # 插值过渡
+        # 插值过渡（使用站立专用增益）
         for step in range(num_step):
             alpha = step / num_step
             for j in range(dof_size):
@@ -299,47 +252,108 @@ class Controller:
                     init_dof_pos[j] * (1 - alpha) + default_pos[j] * alpha
                 )
                 self.low_cmd.motor_cmd[motor_idx].qd = 0
-                self.low_cmd.motor_cmd[motor_idx].kp = kps[j]
-                self.low_cmd.motor_cmd[motor_idx].kd = kds[j]
+                self.low_cmd.motor_cmd[motor_idx].kp = float(self._stand_kp_20[motor_idx])
+                self.low_cmd.motor_cmd[motor_idx].kd = float(self._stand_kd_20[motor_idx])
                 self.low_cmd.motor_cmd[motor_idx].tau = 0
             self.send_cmd(self.low_cmd)
             time.sleep(self.config.control_dt)
         print("[INFO]: Reached default pos.")
 
     def default_pos_state(self):
-        """默认站立保持状态：等待遥控器 A 键。"""
-        print("[INFO]: Enter default pos state. Waiting for Button A signal...")
-        leg_size = len(self.config.leg_joint2motor_idx)
+        """默认站立保持状态：等待遥控器 Start 键。"""
+        print("[INFO]: Enter default pos state. Waiting for Start signal...")
 
-        while self.remote_controller.button[KeyMap.A] != 1:
-            # 腿部
-            for i in range(leg_size):
-                motor_idx = self.config.leg_joint2motor_idx[i]
-                self.low_cmd.motor_cmd[motor_idx].q = self.config.default_angles[i]
-                self.low_cmd.motor_cmd[motor_idx].qd = 0
-                self.low_cmd.motor_cmd[motor_idx].kp = self.config.stiffness[i] * 5
-                self.low_cmd.motor_cmd[motor_idx].kd = self.config.damping[i]
-                self.low_cmd.motor_cmd[motor_idx].tau = 0
-            # 腰+臂
-            for i in range(len(self.config.arm_waist_joint2motor_idx)):
-                motor_idx = self.config.arm_waist_joint2motor_idx[i]
-                idx = i + leg_size
-                self.low_cmd.motor_cmd[motor_idx].q = self.config.default_angles[idx]
-                self.low_cmd.motor_cmd[motor_idx].qd = 0
-                self.low_cmd.motor_cmd[motor_idx].kp = self.config.stiffness[idx] * 3
-                self.low_cmd.motor_cmd[motor_idx].kd = self.config.damping[idx]
-                self.low_cmd.motor_cmd[motor_idx].tau = 0
+        while self.remote_controller.button[KeyMap.start] != 1:
+            for motor_id in range(20):
+                self.low_cmd.motor_cmd[motor_id].q = float(self._default_pos_20[motor_id])
+                self.low_cmd.motor_cmd[motor_id].qd = 0.0
+                self.low_cmd.motor_cmd[motor_id].kp = float(self._stand_kp_20[motor_id])
+                self.low_cmd.motor_cmd[motor_id].kd = float(self._stand_kd_20[motor_id])
+                self.low_cmd.motor_cmd[motor_id].tau = 0.0
             self.send_cmd(self.low_cmd)
-            quat = self.low_state.imu_state.quaternion
-            print(f"[DEBUG]: IMU quaternion (w,x,y,z): {quat}")
             time.sleep(self.config.control_dt)
 
-    # ----- 辅助方法 -----
-    def yaw_quat(self, q):
-        """从四元数中提取 yaw 分量。"""
-        w, x, y, z = q
-        yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y ** 2 + z ** 2))
-        return np.array([np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)])
+    def blend_to_first_action(self):
+        """1 秒平滑过渡：从站立姿态渐进到策略第一个动作。
+
+        逐帧调用策略推理，将动作输出与当前站立姿态做 alpha 插值，
+        增益同步从站立增益过渡到策略增益，避免突变力矩冲击。
+        """
+        print("[INFO]: Blending to first action (1s)...")
+        steps = int(1.0 / self.config.control_dt)
+        start_pos_20 = np.zeros(20, dtype=np.float64)
+        for i in range(20):
+            start_pos_20[i] = self.low_state.motor_state[i].q
+
+        for step in range(steps):
+            alpha = float(step) / float(steps)
+            self._run_policy_step()
+            target_dof_xml = action_to_target(
+                self.action, self.config.default_angles_seq,
+                self.config.action_scale_seq, joint_seq, joint_xml,
+            )
+            target_20 = self._default_pos_20.copy()
+            for dof_i in range(len(dof_idx)):
+                target_20[dof_idx[dof_i]] = target_dof_xml[dof_i]
+            for motor_id in range(20):
+                self.low_cmd.motor_cmd[motor_id].q = float(
+                    (1.0 - alpha) * start_pos_20[motor_id] + alpha * target_20[motor_id])
+                self.low_cmd.motor_cmd[motor_id].qd = 0.0
+                self.low_cmd.motor_cmd[motor_id].kp = float(
+                    (1.0 - alpha) * self._stand_kp_20[motor_id] + alpha * self._kp_20[motor_id])
+                self.low_cmd.motor_cmd[motor_id].kd = float(
+                    (1.0 - alpha) * self._stand_kd_20[motor_id] + alpha * self._kd_20[motor_id])
+                self.low_cmd.motor_cmd[motor_id].tau = 0.0
+            self.send_cmd(self.low_cmd)
+            time.sleep(self.config.control_dt)
+        print("[INFO]: Blend complete.")
+
+    def _run_policy_step(self):
+        """执行单帧策略推理，更新 self.action。"""
+        # 传感器校验
+        valid, pos_20, vel_20, imu_quat, imu_gyro = self.safety.check_sensors(self.low_state)
+        # 关节状态
+        for i in range(len(dof_idx)):
+            self.qj[i] = pos_20[dof_idx[i]]
+            self.dqj[i] = vel_20[dof_idx[i]]
+        # IMU（IMU 在躯干上，需变换到骨盆坐标系）
+        imu_ang_vel = imu_gyro.reshape(1, 3).astype(np.float32)
+        waist_yaw_idx = self.config.arm_waist_joint2motor_idx[0]
+        pelvis_quat, pelvis_ang_vel = transform_imu_data(
+            waist_yaw=pos_20[waist_yaw_idx], waist_yaw_omega=vel_20[waist_yaw_idx],
+            imu_quat=imu_quat, imu_omega=imu_ang_vel,
+        )
+        # cmd
+        minp = self.motioninputpos[self.timestep, :NUM_ACTIONS]
+        minv = self.motioninputvel[self.timestep, :NUM_ACTIONS]
+        cmd = np.concatenate((minp, minv), axis=0)
+        if self.timestep >= self.num_frames - 20:
+            alpha = float(self.timestep - (self.num_frames - 20)) / 20.0
+            alpha = min(alpha, 1.0)
+            cmd[:NUM_ACTIONS] = (1.0 - alpha) * cmd[:NUM_ACTIONS] + alpha * self._hold_target_seq
+            cmd[NUM_ACTIONS:] *= (1.0 - alpha)
+        # 观测
+        qj_seq = remap_xml_to_seq(self.qj, joint_xml, joint_seq)
+        dqj_seq = remap_xml_to_seq(self.dqj, joint_xml, joint_seq)
+        obs = build_observation(
+            cmd=cmd, pelvis_quat=pelvis_quat,
+            motion_ref_quat=self.motionquat[self.timestep, self.motion_anchor_idx, :],
+            pelvis_ang_vel=pelvis_ang_vel, qpos_seq=qj_seq, qvel_seq=dqj_seq,
+            action_buffer=self.action_buffer,
+            default_angles_seq=self.config.default_angles_seq,
+            init_to_world=self.init_to_world, num_obs=self.config.num_obs,
+        )
+        obs = self.safety.clip_obs(obs)
+        # 推理
+        raw_action = self.policy.run(
+            ["actions"],
+            {"obs": np.expand_dims(obs, axis=0),
+             "time_step": np.array([self.timestep], dtype=np.float32).reshape(1, 1)},
+        )[0]
+        raw_action = np.asarray(raw_action).reshape(-1)
+        valid_action, safe_action = self.safety.check_action(raw_action)
+        self.action = self.safety.process_action(safe_action, self.timestep)
+        self.action_buffer = self.action.copy()
 
     # ----- 主控制循环 -----
     def run(self):
@@ -375,76 +389,58 @@ class Controller:
 
         # ================================================================
         # 3. Yaw 对齐初始化（前 2 步）
-        #    将 mocap 世界帧的 yaw 与机器人启动时的骨盆 yaw 对齐，
-        #    使得后续 anchor_ori_b 可以在同一坐标系下计算相对朝向。
+        #    将 mocap 世界帧的 yaw 与机器人启动时的骨盆 yaw 对齐。
         # ================================================================
         if self.timestep < 2:
-            ref_motion_quat = self.motionquat[self.timestep, self.motion_anchor_idx, :]
-            yaw_motion_quat = self.yaw_quat(ref_motion_quat)
-            yaw_motion_matrix = quaternion_to_rotation_matrix(yaw_motion_quat)
-
-            yaw_robot_quat = self.yaw_quat(pelvis_quat)
-            yaw_robot_matrix = quaternion_to_rotation_matrix(yaw_robot_quat)
-
-            self.init_to_world = yaw_robot_matrix @ yaw_motion_matrix.T
+            ref_quat = self.motionquat[self.timestep, self.motion_anchor_idx, :]
+            self.init_to_world = compute_init_to_world(pelvis_quat, ref_quat)
 
         # ================================================================
-        # 4. 构造观测向量 (110 维)
-        # 与 h1sim2sim_v2.py 完全对齐：
-        #   anchor_pos_b (3)  → 置零（实机无绝对世界位置）
-        #   anchor_ori_b (6)  → 实时计算 quat_inv(pelvis) * ref_aligned（与 sim2sim_v2 一致）
-        #   base_lin_vel  (3) → 置零（实机无直接线速度传感器）
-        #   base_ang_vel  (3) → IMU 角速度经 torso→pelvis 变换
+        # 4. 构造观测向量 (110 维) — 使用共享模块，与 h1sim2sim_v2.py 完全一致
         # ================================================================
-        qj_obs = self.qj.copy()
-        dqj_obs = self.dqj.copy()
-
-        # 4a. 运动指令: 目标关节位置 + 目标关节速度 (19+19=38)
+        # cmd: 目标关节位置 + 目标关节速度 (19+19=38)，来自 .npz
         minp = self.motioninputpos[self.timestep, :NUM_ACTIONS]
         minv = self.motioninputvel[self.timestep, :NUM_ACTIONS]
-        motioninput = np.concatenate((minp, minv), axis=0)
+        cmd = np.concatenate((minp, minv), axis=0)
 
-        # 4b. 运动锚点相对朝向 (6D)：与 h1sim2sim_v2 一致的 quat_inv(robot) * ref 计算
-        motion_anchor_quat = self.motionquat[self.timestep, self.motion_anchor_idx, :]
-        aligned_ref_quat = quaternion_multiply(
-            matrix_to_quaternion_simple(self.init_to_world), motion_anchor_quat
+        # ★ 舞蹈结束前 20 帧：命令位置 → 锁定姿态，速度 → 0
+        pre_blend = 20
+        if self.timestep >= self.num_frames - pre_blend:
+            alpha = float(self.timestep - (self.num_frames - pre_blend)) / float(pre_blend)
+            alpha = min(alpha, 1.0)
+            cmd[:NUM_ACTIONS] = (1.0 - alpha) * cmd[:NUM_ACTIONS] + alpha * self._hold_target_seq
+            cmd[NUM_ACTIONS:] *= (1.0 - alpha)
+
+        # 参考锚点四元数（来自 .npz body_quat_w）
+        motion_ref_quat = self.motionquat[self.timestep, self.motion_anchor_idx, :]
+
+        # 关节状态 XML→ONNX 重排
+        qj_obs_seq = remap_xml_to_seq(self.qj, joint_xml, joint_seq)
+        dqj_obs_seq = remap_xml_to_seq(self.dqj, joint_xml, joint_seq)
+
+        # 构造观测（共享模块，sim2sim 和实机同一份代码）
+        self.obs = build_observation(
+            cmd=cmd,
+            pelvis_quat=pelvis_quat,
+            motion_ref_quat=motion_ref_quat,
+            pelvis_ang_vel=pelvis_ang_vel,
+            qpos_seq=qj_obs_seq,
+            qvel_seq=dqj_obs_seq,
+            action_buffer=self.action_buffer,
+            default_angles_seq=self.config.default_angles_seq,
+            init_to_world=self.init_to_world,
         )
-        anchor_quat_b = quaternion_multiply(
-            quat_inv_np(pelvis_quat), aligned_ref_quat
-        )
-        anchor_ori_b = matrix_from_quat(anchor_quat_b)[:, :2].reshape(-1).astype(np.float32)
-
-        # 4c. 基座角速度（骨盆坐标系，已从 IMU 转换）
-        base_ang_vel = pelvis_ang_vel.reshape(-1).astype(np.float32)
-
-        # 4d. 关节状态（XML 顺序 → ONNX 顺序重排）
-        qj_obs_seq = np.array([qj_obs[joint_xml.index(j)] for j in joint_seq])
-        dqj_obs_seq = np.array([dqj_obs[joint_xml.index(j)] for j in joint_seq])
-
-        # 4e. 组装观测
-        obs_list = [
-            motioninput,                                     # [0:38]  目标关节位置+速度
-            np.zeros(3, dtype=np.float64),                   # [38:41] anchor_pos_b = 0
-            anchor_ori_b,                                    # [41:47] anchor_ori_b（实时计算）
-            np.zeros(3, dtype=np.float64),                   # [47:50] base_lin_vel = 0
-            base_ang_vel,                                    # [50:53] base_ang_vel (IMU)
-            qj_obs_seq - self.config.default_angles_seq,     # [53:72] 关节位置偏差
-            dqj_obs_seq,                                     # [72:91] 关节速度
-            self.action_buffer,                              # [91:110] 上步动作
-        ]
-        self.obs = np.concatenate(obs_list).astype(np.float32)
-
-        # L4 观测裁剪
+        # 观测裁剪（安全模块 L4）
         self.obs = self.safety.clip_obs(self.obs)
 
         # ================================================================
         # 5. 策略推理
         # ================================================================
-        obs_tensor = torch.from_numpy(self.obs).unsqueeze(0)
+        obs_tensor = np.expand_dims(self.obs, axis=0)
         raw_action = self.policy.run(
             ["actions"],
             {
-                "obs": obs_tensor.numpy(),
+                "obs": obs_tensor,
                 "time_step": np.array([self.timestep], dtype=np.float32).reshape(1, 1),
             },
         )[0]
@@ -458,10 +454,11 @@ class Controller:
         self.action = processed_action.copy()
         self.action_buffer = processed_action.copy()
 
-        # 动作 → 目标关节位置（ONNX 顺序 → XML 顺序重排 → DDS 20 维顺序）
-        target_dof_seq = self.config.default_angles_seq + self.action * self.config.action_scale_seq
-        target_dof_seq = target_dof_seq.reshape(-1)
-        target_dof_xml = np.array([target_dof_seq[joint_seq.index(j)] for j in joint_xml])
+        # 动作 → 目标关节位置（ONNX 顺序 → XML 顺序，共享模块）
+        target_dof_xml = action_to_target(
+            self.action, self.config.default_angles_seq,
+            self.config.action_scale_seq, joint_seq, joint_xml,
+        )
 
         # DOF 顺序 (19,) → DDS 电机顺序 (20,)
         q_des_20 = self._default_pos_20.copy()
@@ -472,18 +469,18 @@ class Controller:
         # L5: 速率限制 + 软关节限位
         q_des_20 = self.safety.clamp_q_des(q_des_20)
 
+        for motor_id in range(20):
+            self.low_cmd.motor_cmd[motor_id].q = float(q_des_20[motor_id])
+            self.low_cmd.motor_cmd[motor_id].qd = 0.0
+            self.low_cmd.motor_cmd[motor_id].kp = float(self._kp_20[motor_id])
+            self.low_cmd.motor_cmd[motor_id].kd = float(self._kd_20[motor_id])
+            self.low_cmd.motor_cmd[motor_id].tau = 0.0
+
         self.timestep += 1
 
         # ================================================================
-        # 6. 构建并发送 low_cmd
+        # 6. 发送 low_cmd（指令已在上面填充）
         # ================================================================
-        for motor_id in range(20):
-            m = self.low_cmd.motor_cmd[motor_id]
-            m.q = float(q_des_20[motor_id])
-            m.qd = 0.0
-            m.kp = float(self._kp_20[motor_id])
-            m.kd = float(self._kd_20[motor_id])
-            m.tau = 0.0
 
         self.send_cmd(self.low_cmd)
         time.sleep(self.config.control_dt)
@@ -497,16 +494,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="H1 机器人全身策略实机部署脚本",
     )
-    parser.add_argument("config", type=str, help="配置文件名称（位于 configs 文件夹）",
-                        default="h1.yaml")
+    parser.add_argument("config", type=str, nargs="?", default="h1.yaml",
+                        help="配置文件名称（位于 configs 文件夹）")
     parser.add_argument("--interface", type=str, default=None,
                         help="DDS 网卡名（可选，覆盖配置文件中的 dds_interface）")
     parser.add_argument("--domain", type=int, default=None,
                         help="DDS 域 ID（可选，覆盖配置文件中的 dds_domain）")
     args = parser.parse_args()
 
-    # 加载配置
-    config_path = f"{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real/configs/{args.config}"
+    # 加载配置（相对脚本所在目录）
+    config_path = os.path.join(_script_dir, "configs", args.config)
     config = Config(config_path)
 
     # 初始化 DDS 通信（优先用命令行参数，回退到配置文件）
@@ -518,18 +515,20 @@ if __name__ == "__main__":
     controller = Controller(config)
 
     # === 部署流程 ===
-    # 1. 零力矩状态 → 按 Start 键继续
-    controller.zero_torque_state()
+    # 1. PD Hold 锁定当前位置（不脱力）→ 按 Start 键继续
+    controller.hold_current_position()
     # 2. 平滑过渡到默认站立姿态
     controller.move_to_default_pos()
     # 3. 默认站立保持 → 按 A 键接合 RL 策略
     controller.default_pos_state()
+    # 4. 1 秒平滑过渡到第一个舞蹈动作（防突变），然后直接开始
+    controller.blend_to_first_action()
 
     # 标记 RL 接合
     controller.safety.engage()
     controller._rl_engaged = True
     print("=" * 60)
-    print("[INFO] RL 策略已接合！按 Select 键退出")
+    print("[INFO] RL 策略已接合！按 B 退出")
     print(f"[INFO] {controller.safety.status_summary}")
     print("=" * 60)
 
@@ -558,8 +557,8 @@ if __name__ == "__main__":
                 print(f"[SAFETY] 检测到摔倒 → 断开 RL")
                 break
 
-            if controller.remote_controller.button[KeyMap.select] == 1:
-                print("[INFO] Select 键 → 正常退出")
+            if controller.remote_controller.button[KeyMap.B] == 1:
+                print("[INFO] B 键 → 中断舞蹈退出")
                 break
 
             # 定期状态报告
@@ -571,13 +570,14 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             break
 
-    # 5. 退出 → 断开 RL，切回 PD Hold 平滑过渡
+    # 5. 退出 → 断开 RL，切回 PD Hold 平滑过渡到默认站立
     controller.safety.disengage(
         np.array([controller.low_state.motor_state[i].q for i in range(20)], dtype=np.float64)
     )
     controller._rl_engaged = False
-    # 发送 PD Hold 过渡指令（平滑回到默认姿态）
-    print("[INFO] RL 已断开，发送 PD Hold 过渡指令...")
+
+    # 2 秒平滑过渡到默认站立姿态
+    print("[INFO] RL 已断开，平滑过渡到默认站立姿态...")
     for _ in range(int(2.0 / config.control_dt)):
         q_des, kp, kd = controller.safety.compute_pd_hold_targets(
             controller._default_pos_20, controller._kp_20, controller._kd_20,
@@ -591,7 +591,23 @@ if __name__ == "__main__":
         controller.send_cmd(controller.low_cmd)
         time.sleep(config.control_dt)
 
-    # 最终阻尼模式
+    # 6. 舞蹈结束 → 锁定轨迹末尾姿态（增益不变，策略增益已验证有效）
+    hold_pos = controller._hold_target_20.copy()
+    print("[INFO] 锁定站立（轨迹末尾姿态，策略增益，按 X 退出）")
+    while True:
+        for motor_id in range(20):
+            controller.low_cmd.motor_cmd[motor_id].q = float(hold_pos[motor_id])
+            controller.low_cmd.motor_cmd[motor_id].qd = 0.0
+            controller.low_cmd.motor_cmd[motor_id].kp = float(controller._kp_20[motor_id])
+            controller.low_cmd.motor_cmd[motor_id].kd = float(controller._kd_20[motor_id])
+            controller.low_cmd.motor_cmd[motor_id].tau = 0.0
+        controller.send_cmd(controller.low_cmd)
+        time.sleep(config.control_dt)
+        if controller.remote_controller.button[KeyMap.X] == 1:
+            print("[INFO] X 键 → 进入阻尼关机")
+            break
+
+    # 7. 最终阻尼模式
     create_damping_cmd(controller.low_cmd)
     controller.send_cmd(controller.low_cmd)
     print(f"[INFO] 安全退出。{controller.safety.status_summary}")

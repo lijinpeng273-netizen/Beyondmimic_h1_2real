@@ -6,10 +6,11 @@
 # 数据来源：
 #   other/h1.yaml      — 通信协议、弱力矩电机、电机映射
 #   other/config.yaml   — FixStand 站立姿态、PD 增益（kp/kd）
-#   h1sim2sim.py        — 观测布局、策略参数
+#   h1_config.py        — 关节名与 ONNX/MuJoCo 完全一致
 #
-# 注意：stiffness/damping/default_angles 按 DOF 顺序（非电机 ID 顺序）
-#       DOF 顺序 = joint_xml 排列（见 h1_deploy_real.py 中 dof_idx 定义）
+# 注意：stiffness/damping/default_angles 按 DOF 顺序（=joint_xml=电机ID映射顺序）
+#       default_angles_seq/action_scale_seq 按 ONNX 顺序（=joint_seq）
+#       ONNX 顺序可通过 h1sim2sim_v2.py 运行时从 ONNX 元数据自动解析
 # ===========================================================================
 
 # 控制周期 (50 Hz)
@@ -24,61 +25,57 @@ imu_type: "torso"
 # 弱力矩电机列表（H1 上肢电机力矩较小，需要特殊处理）
 weak_motor: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
 
-# ===========================================================================
+# ============================================================================
 # DDS 通信配置（实机/仿真切换时修改此处）
-# ===========================================================================
+# ============================================================================
 dds_domain: 0             # DDS 域 ID：实机=0，仿真=1
-dds_interface: "enp2s0"   # DDS 网卡：DDS 网卡：仿真用 lo，实机用 enp6s0/enp2s0
+dds_interface: "enp12s0"   # DDS 网卡：仿真用 lo，实机用 enp6s0/enp2s0
 
 # ROS/DDS 话题名
 lowcmd_topic: "rt/lowcmd"
 lowstate_topic: "rt/lowstate"
 
-# ===========================================================================
+# ============================================================================
 # 核心文件路径（部署前必须修改为实际路径）
-# ===========================================================================
+# ============================================================================
 # {LEGGED_GYM_ROOT_DIR} 会被 config.py 自动替换为 legged_gym 仓库根目录
 
 # 策略模型路径（ONNX 格式，由训练脚本导出）
-policy_path: "{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real/bydmimic/2026-06-22_19-48-01_last_run1.onnx"
+policy_path: "{LEGGED_GYM_ROOT_DIR}/deploy_real/bydmimic/2026-06-22_19-48-01_last_run1.onnx"
 
 # 运动参考数据路径（.npz 格式，由 csv_to_npz_with_Interpolation.py 生成）
 # 包含 4 个数组: body_pos_w(N帧,N刚体,3), body_quat_w(N帧,N刚体,4),
 #               joint_pos(N帧,19), joint_vel(N帧,19)
-motion_file: "{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real/bydmimic/dance1_subject3_last.npz"
+motion_file: "{LEGGED_GYM_ROOT_DIR}/deploy_real/bydmimic/dance1_subject3_last.npz"
 
 # 运动数据中锚点刚体的索引（骨盆 pelvis 在 body_pos_w 中的位置）
 # 通常为 0，若运动文件 body 顺序不同则需调整
 motion_anchor_index: 0
 
 # ===========================================================================
-# 电机硬件布局（按 DOF 顺序，与 joint_xml 一致，共 19 个）
+# 电机硬件布局（按 DOF 顺序 = joint_xml，共 19 个）
 # ===========================================================================
-
-# ===========================================================================
-# 电机硬件布局（按 DOF 顺序，与 joint_xml 一致，共 19 个）
-# ===========================================================================
-#   DOF pos | 关节名              | 电机ID | 说明
-#   ─────────────────────────────────────────────
-#    0      | L_hip_yaw_joint     |  7     | 左髋偏航
-#    1      | L_hip_roll_joint    |  3     | 左髋侧摆
-#    2      | L_hip_pitch_joint   |  4     | 左髋俯仰
-#    3      | L_knee_joint        |  5     | 左膝
-#    4      | L_ankle_pitch_joint | 10     | 左踝
-#    5      | R_hip_yaw_joint     |  8     | 右髋偏航
-#    6      | R_hip_roll_joint    |  0     | 右髋侧摆
-#    7      | R_hip_pitch_joint   |  1     | 右髋俯仰
-#    8      | R_knee_joint        |  2     | 右膝
-#    9      | R_ankle_pitch_joint | 11     | 右踝
-#   10      | waist_yaw_joint     |  6     | 腰偏航
-#   11      | L_shoulder_pitch_joint | 16  | 左肩俯仰
-#   12      | L_shoulder_roll_joint  | 17  | 左肩侧摆
-#   13      | L_elbow_joint        | 18     | 左肘
-#   14      | L_wrist_joint        | 19     | 左腕（单自由度）
-#   15      | R_shoulder_pitch_joint | 12  | 右肩俯仰
-#   16      | R_shoulder_roll_joint  | 13  | 右肩侧摆
-#   17      | R_elbow_joint        | 14     | 右肘
-#   18      | R_wrist_joint        | 15     | 右腕（单自由度）
+#   DOF pos | 关节名                   | 电机ID | 说明
+#   ───────────────────────────────────────────────────
+#    0      | left_hip_yaw_joint       |  7     | 左髋偏航
+#    1      | left_hip_roll_joint      |  3     | 左髋侧摆
+#    2      | left_hip_pitch_joint     |  4     | 左髋俯仰
+#    3      | left_knee_joint          |  5     | 左膝
+#    4      | left_ankle_joint         | 10     | 左踝
+#    5      | right_hip_yaw_joint      |  8     | 右髋偏航
+#    6      | right_hip_roll_joint     |  0     | 右髋侧摆
+#    7      | right_hip_pitch_joint    |  1     | 右髋俯仰
+#    8      | right_knee_joint         |  2     | 右膝
+#    9      | right_ankle_joint        | 11     | 右踝
+#   10      | torso_joint              |  6     | 腰偏航
+#   11      | left_shoulder_pitch_joint| 16     | 左肩俯仰
+#   12      | left_shoulder_roll_joint | 17     | 左肩侧摆
+#   13      | left_shoulder_yaw_joint  | 18     | 左肩偏航 (H1特有, 无腕关节)
+#   14      | left_elbow_joint         | 19     | 左肘
+#   15      | right_shoulder_pitch_joint| 12    | 右肩俯仰
+#   16      | right_shoulder_roll_joint | 13    | 右肩侧摆
+#   17      | right_shoulder_yaw_joint | 14     | 右肩偏航 (H1特有)
+#   18      | right_elbow_joint        | 15     | 右肘
 # ===========================================================================
 
 # 双腿关节电机映射（10 个，按 joint_xml 前 10 个元素的顺序）
@@ -91,74 +88,71 @@ arm_waist_joint2motor_idx: [6, 16, 17, 18, 19, 12, 13, 14, 15]
 # 策略维度
 # ===========================================================================
 num_actions: 19          # 策略输出维度（全身 19 个关节）
-num_obs: 110             # 单帧观测维度（38 cmd + 3 pos + 6 ori + 3 linvel + 3 angvel + 19 pos + 19 vel + 19 action）
+num_obs: 110             # 单帧观测维度
 
-# 速度指令限幅（与 h1sim2sim.py 一致）
+# 速度指令限幅
 max_cmd: [0.8, 0.5, 1.57]
 cmd_scale: [2.0, 2.0, 0.25]
 
 # ===========================================================================
-# PD 控制器参数（DOF 顺序，共 19 个，与 joint_xml 一一对应）
-# 注意：已从电机 ID 顺序转换为 DOF 顺序
+# PD 控制器参数（DOF 顺序 = joint_xml，共 19 个）
+# 数据来源：ONNX 元数据 joint_stiffness/joint_damping，已从 joint_seq → joint_xml 重排
+# 与训练时完全一致，h1sim2sim_v2.py 也读取同一组值
 # ===========================================================================
-# 刚度系数 Kp
-stiffness: [200, 200, 200, 300, 40,       # 左腿: yaw, roll, pitch, knee, ankle
-            200, 200, 200, 300, 40,       # 右腿: yaw, roll, pitch, knee, ankle
-            200,                          # 腰: yaw
-            100, 50, 50, 50,              # 左臂: shld_pitch, shld_roll, elbow, wrist
-            100, 50, 50, 50]              # 右臂: shld_pitch, shld_roll, elbow, wrist
+# 刚度系数 Kp (DOF 顺序)
+stiffness: [40.2, 40.2, 40.2, 99.1, 28.5,    # 左腿: yaw, roll, pitch, knee, ankle
+            40.2, 40.2, 40.2, 99.1, 28.5,    # 右腿: yaw, roll, pitch, knee, ankle
+            40.2,                             # 腰: torso
+            14.3, 14.3, 16.8, 16.8,          # 左臂: shld_pitch, shld_roll, shld_yaw, elbow
+            14.3, 14.3, 16.8, 16.8]           # 右臂: shld_pitch, shld_roll, shld_yaw, elbow
 
-# 阻尼系数 Kd
-damping: [5, 5, 5, 6, 2,                 # 左腿
-          5, 5, 5, 6, 2,                 # 右腿
-          5,                              # 腰
-          2, 2, 2, 2,                    # 左臂
-          2, 2, 2, 2]                    # 右臂
-
-# ===========================================================================
-# 关节默认位置角度（DOF 顺序，共 19 个）
-# 数据来源：other/config.yaml FixStand qs[1]，已从电机 ID 序转换为 DOF 序
-# ===========================================================================
-default_angles: [0.0, 0.0, -0.28, 0.79, -0.52,    # 左腿
-                 0.0, 0.0, -0.28, 0.79, -0.52,    # 右腿
-                 0.0,                               # 腰
-                 0.2, 0.0, 0.0, 0.32,              # 左臂
-                 0.2, 0.0, 0.0, 0.32]              # 右臂
+# 阻尼系数 Kd (DOF 顺序)
+damping: [2.6, 2.6, 2.6, 6.3, 1.8,          # 左腿
+          2.6, 2.6, 2.6, 6.3, 1.8,          # 右腿
+          2.6,                               # 腰
+          0.9, 0.9, 1.1, 1.1,               # 左臂
+          0.9, 0.9, 1.1, 1.1]               # 右臂
 
 # ===========================================================================
-# 策略视角参数（按 joint_seq 顺序，共 19 个关节）
-# joint_seq 按关节类型分组、左右对称排列：
-#    0:L_hip_yaw  1:R_hip_yaw  2:L_hip_roll  3:R_hip_roll
-#    4:L_hip_pitch 5:R_hip_pitch 6:L_knee 7:R_knee
-#    8:L_ankle 9:R_ankle 10:waist_yaw
-#   11:L_shoulder_pitch 12:R_shoulder_pitch
-#   13:L_shoulder_roll 14:R_shoulder_roll
-#   15:L_elbow 16:R_elbow 17:L_wrist 18:R_wrist
+# 关节默认位置角度（DOF 顺序 = joint_xml，共 19 个）
+# 数据来源：H1 FixStand 实机验证站立姿态 (_QPOS_TREE_DEFAULTS)
+# 用途：move_to_default_pos 目标姿态 + PD Hold 锁定目标
+# ===========================================================================
+default_angles: [0.00, 0.00, -0.40, 0.80, -0.40,   # 左腿: yaw, roll, pitch, knee, ankle
+                 0.00, 0.00, -0.40, 0.80, -0.40,   # 右腿: yaw, roll, pitch, knee, ankle
+                 0.00,                               # 腰: torso
+                 0.0, 0.0, 0.0, 0.0,            # 左臂: shld_pitch, shld_roll, shld_yaw, elbow
+                 0.0, 0.0, 0.0, 0.0]           # 右臂: shld_pitch, shld_roll, shld_yaw, elbow
+
+# ===========================================================================
+# 策略视角参数（按 ONNX joint_seq 顺序 = joint_seq，共 19 个关节）
+#   joint_seq 顺序:
+#    0:left_hip_yaw  1:right_hip_yaw  2:torso_joint  3:left_hip_roll  4:right_hip_roll
+#    5:left_shoulder_pitch  6:right_shoulder_pitch
+#    7:left_hip_pitch  8:right_hip_pitch  9:left_shoulder_roll  10:right_shoulder_roll
+#   11:left_knee  12:right_knee  13:left_shoulder_yaw  14:right_shoulder_yaw
+#   15:left_ankle  16:right_ankle  17:left_elbow  18:right_elbow
+# 数据来源：ONNX 元数据，与训练时完全一致
 # ===========================================================================
 
-# 策略默认关节角度（与 h1sim2sim.py 的 default_joint_pos 一致）
+# 策略默认关节角度（ONNX 顺序）
 # 用途：① 观测归一化 qpos - default_angles_seq
 #       ② 动作还原 target = default_angles_seq + action * action_scale_seq
-default_angles_seq: [0.00, 0.00,     # 髋偏航 L,R
-                     0.00, 0.00,     # 髋侧摆 L,R
-                    -0.28, -0.28,    # 髋俯仰 L,R
-                     0.79, 0.79,     # 膝 L,R
-                    -0.52, -0.52,    # 踝 L,R
-                     0.00,           # 腰偏航
-                     0.20, 0.20,     # 肩俯仰 L,R
-                     0.00, 0.00,     # 肩侧摆 L,R
-                     0.00, 0.00,     # 肘 L,R
-                     0.32, 0.32]     # 腕 L,R
+default_angles_seq: [0.00, 0.00, 0.00, 0.00, 0.00,     # hip_yaw L,R + torso + hip_roll L,R
+                     0.20, 0.20,                         # shoulder_pitch L,R
+                    -0.40, -0.40,                         # hip_pitch L,R
+                     0.20, -0.20,                          # shoulder_roll L,R
+                     0.80, 0.80,                           # knee L,R
+                     0.00, 0.00,                           # shoulder_yaw L,R
+                    -0.40, -0.40,                          # ankle L,R
+                     0.60, 0.60]                           # elbow L,R
 
-# 每个关节的动作缩放因子（将策略输出 [-1,1] 映射为关节角度偏移量 rad）
-# 腕关节活动范围小，缩放因子显著小于其他关节
-action_scale_seq: [0.50, 0.50,     # 髋偏航 L,R
-                   0.50, 0.50,     # 髋侧摆 L,R
-                   0.45, 0.45,     # 髋俯仰 L,R
-                   0.35, 0.35,     # 膝 L,R
-                   0.35, 0.35,     # 踝 L,R
-                   0.45,           # 腰偏航
-                   0.45, 0.45,     # 肩俯仰 L,R
-                   0.45, 0.45,     # 肩侧摆 L,R
-                   0.45, 0.45,     # 肘 L,R
-                   0.075,0.075]    # 腕 L,R
+# 动作缩放因子（ONNX 顺序，将策略输出映射为关节角度偏移 rad）
+action_scale_seq: [1.244, 1.244, 1.244, 1.244, 1.244,   # hip_yaw L,R + torso + hip_roll L,R
+                   0.702, 0.702,                           # shoulder_pitch L,R
+                   1.244, 1.244,                           # hip_pitch L,R
+                   0.702, 0.702,                           # shoulder_roll L,R
+                   0.757, 0.757,                           # knee L,R
+                   0.268, 0.268,                           # shoulder_yaw L,R
+                   0.351, 0.351,                           # ankle L,R
+                   0.268, 0.268]                           # elbow L,R
